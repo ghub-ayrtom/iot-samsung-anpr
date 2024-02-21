@@ -3,7 +3,7 @@
   <component name="Black">
     <option name="sdkName" value="Python 3.10 (IoT_Samsung_ANPR)" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.10 (IoT_Samsung_ANPR)" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.10 (iot-samsung-anpr)" project-jdk-type="Python SDK" />
   <component name="PyCharmProfessionalAdvertiser">
     <option name="shown" value="true" />
   </component>

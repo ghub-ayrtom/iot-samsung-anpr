@@ -44,7 +44,7 @@ def load_default_stn(device):
 
     load_weights(
         model=model,
-        weights='/home/ayrtom/PycharmProjects/IoT_Samsung_ANPR/models/LPRNet/SpatialTransformer_pretrained.ckpt',
+        weights='/home/ayrtom/PycharmProjects/iot-samsung-anpr/models/LPRNet/SpatialTransformer_pretrained.ckpt',
         device=device
     )
 
