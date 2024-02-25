@@ -11,8 +11,6 @@ from models.LPRNet.LPRNet import load_default_lprnet
 from models.LPRNet.SpatialTransformer import load_default_stn
 import numpy as np
 import os
-from pytesseract import Output
-import pytesseract
 import torch
 from ultralytics import YOLO
 
@@ -47,8 +45,7 @@ def convert_image_bytes_to_image(image_bytes):
     return image
 
 
-def get_prediction(image_bytes, debug=True):
-    # license_plates_database = ['B440TM73', '...']
+def get_prediction(image_bytes):
     license_plate_image = convert_image_bytes_to_image(image_bytes)
 
     """
@@ -62,9 +59,6 @@ def get_prediction(image_bytes, debug=True):
     for license_plate in license_plate_detections:
         for license_plate_bounding_box in license_plate.boxes.data.tolist():
             x1, y1, x2, y2, confidence, class_id = license_plate_bounding_box
-
-            if debug:
-                cv2.rectangle(license_plate_image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 5)
 
             license_plate_image_cropped = license_plate_image[int(y1):int(y2), int(x1):int(x2)]
             license_plate_image_cropped = cv2.resize(license_plate_image_cropped, (94, 24), interpolation=cv2.INTER_CUBIC)
@@ -88,49 +82,12 @@ def get_prediction(image_bytes, debug=True):
             )
 
             if (probability[0] < -85) and (len(labels[0]) in [8, 9]):
-                # if labels[0] in license_plates_database:
-                # return 'License plate number {} with {} probability.'.format(labels[0], probability[0])
-
                 response = {
                     'license_plate_text': labels[0],
                     'license_plate_bbox': [x1, y1, x2, y2],
                 }
 
                 return response
-
-            '''
-    
-            license_plate_cropped = license_plate_image[int(y1 + 10):int(y2 - 10), int(x1 + 5):int(x2 - 5)]
-            # license_plate_resized = cv2.resize(license_plate_cropped, (200, 100))
-            license_plate_grayscale = cv2.cvtColor(license_plate_cropped, cv2.COLOR_BGR2GRAY)
-            # license_plate_blurry = cv2.medianBlur(license_plate_grayscale, 1)
-            # license_plate_blurry = cv2.GaussianBlur(license_plate_grayscale, (1, 1), sigmaX=0)
-            _, license_plate_thresh = cv2.threshold(license_plate_grayscale, 200, 255, cv2.THRESH_BINARY)
-    
-            kernel = np.ones((2, 2), np.uint8)
-            license_plate_dilate = cv2.dilate(license_plate_thresh, kernel, iterations=1)  # white on black
-    
-            kernel = np.ones((3, 3), np.uint8)
-            license_plate_erode = cv2.erode(license_plate_dilate, kernel, iterations=1)  # black on white
-    
-            if debug:
-                thresh_images_count = get_images_count('../thresh_set_up')
-                cv2.imwrite('../thresh_set_up/{}.jpg'.format(thresh_images_count), license_plate_erode)
-    
-            tesseract_recognized_text = pytesseract.image_to_data(
-                license_plate_erode,
-                lang='eng',
-                config=f'--psm 7 --oem 3 -c tessedit_char_whitelist=ABEKMHOPCTYX0123456789',
-                output_type=Output.DICT,
-            )
-    
-            for recognized_text in tesseract_recognized_text['text']:
-                recognized_text = recognized_text.upper().replace(' ', '')
-    
-                if recognized_text in license_plates_database:
-                    return recognized_text
-                    
-            '''
 
     response = {
         'license_plate_text': '',
@@ -142,12 +99,12 @@ def get_prediction(image_bytes, debug=True):
 
 @app.route('/recognize', methods=['POST'])
 def recognize_license_plate(debug=False):
-    if request.method == "POST":
+    if request.method == 'POST':
         license_plate_image_raw_bytes = request.get_data()  # ESP32CAM
 
         if debug:
             uploaded_images_count = get_images_count(upload_images_path)
-            save_location = (os.path.join(app.root_path, "{}/{}.jpg".format(upload_images_path, uploaded_images_count)))
+            save_location = (os.path.join(app.root_path, '{}/{}.jpg'.format(upload_images_path, uploaded_images_count)))
 
             license_plate_image_file = open(save_location, 'wb')
             license_plate_image_file.write(license_plate_image_raw_bytes)
@@ -159,8 +116,22 @@ def recognize_license_plate(debug=False):
 
 @app.route("/")
 def running_test():
-    return "<p>The server is running!</p>"
+    return '<p>The server is running!</p>'
+
+
+@app.route('/servo', methods=['POST'])
+def esp32_servo_test():
+    license_plates_database = ['A310TA73', '...']
+
+    if request.method == 'POST':
+        data = request.get_json()
+        recognized_license_plate = data['recognized_license_plate']
+
+        if recognized_license_plate in license_plates_database:
+            return 'OPEN'
+        else:
+            return 'CLOSE'
 
 
 if __name__ == '__main__':
-    app.run(host='localhost', port=port)
+    app.run(host='0.0.0.0', port=port)
