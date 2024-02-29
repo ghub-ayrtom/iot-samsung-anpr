@@ -129,7 +129,7 @@ def load_default_lprnet(device):
 
     load_weights(
         model=model,
-        weights='/home/ayrtom/PycharmProjects/iot-samsung-anpr/models/LPRNet/LPRNet_pretrained.ckpt',
+        weights='/home/ayrtom/PycharmProjects/iot-samsung-anpr/models/LPRNet/LPRNet.ckpt',
         device=device
     )
 
