@@ -21,7 +21,7 @@
 #define HREF_GPIO_NUM 23
 #define PCLK_GPIO_NUM 22
 #define SERVO_PIN_NUM 14
-#define BUTTON_PIN_NUM 15
+#define BUTTON_PIN_NUM 13
 
 const String networkName = "HolyNET";
 const String networkPassword = "24100202";
@@ -101,12 +101,12 @@ void setup()
     #endif
   }
 
-  */
-
   #if defined(CAMERA_MODEL_ESP_EYE)
     pinMode(13, INPUT_PULLUP);
     pinMode(14, INPUT_PULLUP);
   #endif
+
+  */
 
   esp_err_t error = esp_camera_init(&config);
 
@@ -163,7 +163,7 @@ void setup()
 void loop()
 {
   camera_fb_t *frame_buffer = NULL;
-  frame_buffer = esp_camera_fb_get();
+  frame_buffer = esp_camera_fb_get(); // Получаем изображение с видеокамеры
 
   if (!frame_buffer) {
     Serial.println("Camera capture failed!\n");
@@ -174,28 +174,36 @@ void loop()
     http.begin(serverURL);
 
     Serial.println("\n[HTTP] POST...");
-    int httpCode = http.sendRequest("POST", frame_buffer->buf, frame_buffer->len);
+    int httpCode = http.sendRequest("POST", frame_buffer->buf, frame_buffer->len); // Отправляем полученное изображение на веб-сервер
 
     if (httpCode > 0) {
       if (httpCode == HTTP_CODE_OK) {
-        String response = http.getString();
+        String response = http.getString(); // Получаем ответ от веб-сервера ("OPEN" или "CLOSE")
 
         if (response.length() > 0) {
-          if (response == "OPEN" && servo.read() <= 0) {
+          // Если автомобильный номер с изображения был найден в локальной базе данных сервера И шлагбаум опущен
+          if (response == "OPEN" && servo.read() == -1) {
             Serial.println("[AUTOMATIC COMMAND] Open the barrier...\n");
-            servo.write(90);
-            delay(5000);
-          } else if ((response == "OPEN" || response == "CLOSE") && servo.read() > 0) {
-              Serial.println("[AUTOMATIC COMMAND] Close the barrier...\n");
-              servo.write(0);
-          } else if (response == "CLOSE" && servo.read() <= 0) {
-              buttonState = digitalRead(BUTTON_PIN_NUM);
+            servo.write(90); // Поднимаем его
+            delay(5000); // Ждём определённое время, чтобы автомобиль успел проехать
+          // Иначе, в не зависимости от поступившей команды И если шлагбаум поднят
+          } else if ((response == "OPEN" || response == "CLOSE") && servo.read() == 89) {
+            Serial.println("[AUTOMATIC COMMAND] Close the barrier...\n");
+            // Опускаем его, так как автомобиля перед ним либо нет ("CLOSE"), 
+            // либо он уже успел проехать в предыдущем условии (на самом деле нет)
+            servo.write(0);
+          // Иначе, если автомобильный номер с изображения не был найден в локальной базе данных сервера И шлагбаум опущен
+          } else if (response == "CLOSE" && servo.read() == -1) {
+            buttonState = digitalRead(BUTTON_PIN_NUM); // Отслеживаем состояние кнопки
 
-              if (buttonState == HIGH) {
-                Serial.println("[MANUAL COMMAND] Open the barrier...\n");
-                servo.write(90);
-                delay(5000);
-              }
+            // Если она была нажата
+            if (buttonState == HIGH) {
+              Serial.println("[MANUAL COMMAND] Open the barrier...\n");
+              servo.write(90); // Поднимаем преграждение в ручном режиме
+              delay(5000); // Также ждём пока автомобиль проедет
+            } else {
+              Serial.println("[NO COMMAND] The barrier is already closed\n");
+            }
           }
         }
       }
