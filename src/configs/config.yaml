@@ -1,0 +1,8 @@
+path: /home/ayrtom/PycharmProjects/iot-samsung-anpr/data
+
+train: train/images
+val: valid/images
+test: test/images
+
+names:
+  0: license plate

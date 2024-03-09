@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Barriers</title>
+</head>
+<body>
+    <h1>List of your barriers</h1>
+    {% if barriers is not none %}
+        {% for barrier in barriers %}
+            <div class="barrier">
+                <p>{{ barrier.id }}</p>
+                <p>{{ barrier.model }}</p>
+                <p>{{ barrier.client_title }}</p>
+                <p>{{ barrier.location }}</p>
+                {% for license_plate in barrier.license_plates %}
+                    <p>>{{ license_plate }}</p>
+                {% endfor %}
+            </div>
+        {% endfor %}
+    {% endif %}
+    <a href="{{ url_for('add_barrier', client_id=request.args.get('client_id'), company=request.args.get('company')) }}">Add Barrier</a>
+</body>
+</html>
