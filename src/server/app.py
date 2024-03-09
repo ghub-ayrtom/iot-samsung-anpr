@@ -7,15 +7,13 @@ from flask_login import LoginManager, login_required, login_user, logout_user, U
 import cv2
 from flask import Flask, redirect, render_template, request, url_for
 from flask_wtf import FlaskForm
-from sqlalchemy import ForeignKey, PickleType
+from sqlalchemy import PickleType
 from PIL import Image
 from wtforms.validators import InputRequired, Length, ValidationError
 import io
-from typing import List
 from src.models.LPRNet import load_default_lprnet
 from src.models.SpatialTransformer import load_default_stn
 import logging
-from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.ext.mutable import MutableList
 import numpy as np
 import os
@@ -62,24 +60,7 @@ class Client(sqlite_database.Model, UserMixin):
     username = sqlite_database.Column(sqlite_database.String(15), nullable=False, unique=True)
     password = sqlite_database.Column(sqlite_database.String(25), nullable=False)
     company_name = sqlite_database.Column(sqlite_database.String(25), nullable=False, unique=True)
-    barriers: Mapped[List['Barrier']] = relationship()
-
-    def __repr__(self):
-        return f'<Client: {self.name}>'
-
-
-class Barrier(sqlite_database.Model):
-    __tablename__ = 'barriers'
-
-    id = sqlite_database.Column(sqlite_database.Integer, primary_key=True)
-    client_id: Mapped[int] = mapped_column(ForeignKey('clients.id'), nullable=False)
-    model = sqlite_database.Column(sqlite_database.String(15))
-    client_company_name = sqlite_database.Column(sqlite_database.String(25), nullable=False)
-    location = sqlite_database.Column(sqlite_database.String(50), nullable=False)
-    license_plates = sqlite_database.Column(MutableList.as_mutable(PickleType), default=[])
-
-    def __repr__(self):
-        return f'<{self.client_company_name}\'s barrier: {self.model} ({self.location})>'
+    barriers = sqlite_database.Column(MutableList.as_mutable(PickleType), default=[])
 
 
 class RegisterForm(FlaskForm):
@@ -207,6 +188,8 @@ def get_prediction(image_bytes, debug=False):
             )
 
             if (probability[0] < -85) and (len(labels[0]) in [8, 9]):
+                '''
+                
                 barriers_table = Barrier.query.all()
 
                 # todo: Поиск преграждения с которого пришло изображение, например, по его месторасположению
@@ -233,6 +216,8 @@ def get_prediction(image_bytes, debug=False):
                                 cv2.imwrite(save_location, license_plate_image)
 
                             return 'OPEN'  # Подаём команду на открытие преграждения
+                            
+                '''
 
     return 'CLOSE'  # Иначе, подаём команду на закрытие преграждения
 
@@ -269,7 +254,7 @@ def login():
         if client:
             if bcrypt.check_password_hash(client.password, form.password.data):
                 login_user(client)
-                return redirect(url_for('dashboard', client_id=client.id, company=client.company_name))
+                return redirect(url_for('dashboard', client_id=client.id, client_company_name=client.company_name))
 
     return render_template('login.html', form=form)
 
@@ -283,30 +268,32 @@ def dashboard():
 @app.route('/barriers', methods=['GET', 'POST'])
 @login_required
 def barriers():
-    client_id = request.args.get('client_id')
-    client_barriers_list = Barrier.query.filter_by(client_id=client_id).all()
-    return render_template('barriers.html', barriers=client_barriers_list)
+    client = Client.query.get(request.args.get('client_id'))
+    return render_template('barriers.html', barriers=client.barriers)
 
 
 @app.route('/barriers/add', methods=['GET', 'POST'])
 @login_required
 def add_barrier():
     form = AddBarrierForm()
-    client_id = request.args.get('client_id')
+    client = Client.query.get(request.args.get('client_id'))
 
     if form.validate_on_submit():
-        new_barrier = Barrier(
-            client_id=client_id,
-            model=form.model.data,
-            client_company_name=request.args.get('company'),
-            location=form.location.data,
-            license_plates=form.license_plates.data,
-        )
+        new_barrier = {
+            'id': len(client.barriers) + 1,
+            'client_id': client.id,
+            'model': form.model.data,
+            'client_company_name': client.company_name,
+            'location': form.location.data,
+            'license_plates': form.license_plates.data,
+        }
+
+        client.barriers.append(new_barrier)
 
         try:
-            sqlite_database.session.add(new_barrier)
+            sqlite_database.session.query(Client).filter(Client.id == client.id).update({'barriers': client.barriers})
             sqlite_database.session.commit()
-            return redirect(url_for('barriers', client_id=client_id))
+            return redirect(url_for('barriers', client_id=client.id))
         except SQLAlchemyError as error:
             sqlite_database.rollback()
             logging.error('Failed to commit changes because of {error}. Doing rollback...'.format(error=error))

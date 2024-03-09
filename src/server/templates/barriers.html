@@ -2,23 +2,40 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Barriers</title>
+    <title>Samsung Course (Internet of Things track) — ANPR</title>
 </head>
+<style>
+    table, th, td {
+        border: 1px solid black;
+        text-align: center;
+    }
+</style>
 <body>
     <h1>List of your barriers</h1>
     {% if barriers is not none %}
+        <table>
+            <tr>
+                <th>ID</th>
+                <th>Model</th>
+                <th>Location</th>
+                <th>License plates</th>
+                <th>Logs</th>
+            </tr>
         {% for barrier in barriers %}
-            <div class="barrier">
-                <p>{{ barrier.id }}</p>
-                <p>{{ barrier.model }}</p>
-                <p>{{ barrier.client_title }}</p>
-                <p>{{ barrier.location }}</p>
+            <tr>
+                <td>{{ barrier.id }}</td>
+                <td>{{ barrier.model }}</td>
+                <td>{{ barrier.location }}</td>
+                <td>
                 {% for license_plate in barrier.license_plates %}
-                    <p>>{{ license_plate }}</p>
+                    {{ license_plate }}<br>
                 {% endfor %}
-            </div>
+                </td>
+                <td><a href="">View</a></td>
+            </tr>
         {% endfor %}
+        </table><br>
     {% endif %}
-    <a href="{{ url_for('add_barrier', client_id=request.args.get('client_id'), company=request.args.get('company')) }}">Add Barrier</a>
+    <a href="{{ url_for('add_barrier', client_id=request.args.get('client_id')) }}">Add Barrier</a>
 </body>
 </html>
