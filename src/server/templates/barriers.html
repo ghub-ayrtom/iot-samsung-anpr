@@ -18,7 +18,7 @@
                 <th>ID</th>
                 <th>Model</th>
                 <th>Location</th>
-                <th>License plates</th>
+                <th>License Plates</th>
                 <th>Logs</th>
             </tr>
         {% for barrier in barriers %}
@@ -31,7 +31,7 @@
                     {{ license_plate }}<br>
                 {% endfor %}
                 </td>
-                <td><a href="">View</a></td>
+                <td><a href="{{ url_for('barrier_logs', client_id=request.args.get('client_id'), barrier_id=barrier.id) }}">View</a></td>
             </tr>
         {% endfor %}
         </table><br>

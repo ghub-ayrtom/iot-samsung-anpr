@@ -1,23 +1,25 @@
 import sys
 sys.path.insert(1, '/home/ayrtom/PycharmProjects/iot-samsung-anpr/src/models')
 
+import base64
 from flask_bcrypt import Bcrypt
 from src.models.Decoders import BeamDecoder, decode_function
-from flask_login import LoginManager, login_required, login_user, logout_user, UserMixin
 import cv2
+from datetime import datetime
 from flask import Flask, redirect, render_template, request, url_for
 from flask_wtf import FlaskForm
-from sqlalchemy import PickleType
 from PIL import Image
 from wtforms.validators import InputRequired, Length, ValidationError
 import io
 from src.models.LPRNet import load_default_lprnet
 from src.models.SpatialTransformer import load_default_stn
 import logging
+from flask_login import LoginManager, login_required, login_user, logout_user, UserMixin
 from sqlalchemy.ext.mutable import MutableList
 import numpy as np
 import os
 from wtforms import PasswordField, StringField, SubmitField
+from sqlalchemy import PickleType
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.exc import SQLAlchemyError
 import torch
@@ -150,7 +152,13 @@ def convert_image_bytes_to_image(image_bytes):
     return image
 
 
-def get_prediction(image_bytes, debug=False):
+def convert_numpy_array_to_image(numpy_array):
+    _, image_buffer = cv2.imencode('.png', numpy_array)
+    return base64.b64encode(image_buffer).decode('utf-8')
+
+
+def get_prediction(client_company_name, client_barrier_id, image_bytes):
+    client_barriers = Client.query.filter_by(company_name=client_company_name).first().barriers
     license_plate_image = convert_image_bytes_to_image(image_bytes)
 
     """
@@ -188,43 +196,61 @@ def get_prediction(image_bytes, debug=False):
             )
 
             if (probability[0] < -85) and (len(labels[0]) in [8, 9]):
-                '''
-                
-                barriers_table = Barrier.query.all()
+                for barrier_license_plate in client_barriers[client_barrier_id - 1]['license_plates']:
+                    # Если распознанный автомобильный номер найден в соответствующем списке для данного преграждения
+                    if labels[0] == barrier_license_plate:
+                        cv2.rectangle(
+                            license_plate_image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 5
+                        )
+                        cv2.putText(
+                            license_plate_image, labels[0], (int(x1), int(y1 - 10)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3
+                        )
 
-                # todo: Поиск преграждения с которого пришло изображение, например, по его месторасположению
+                        barrier_log = {
+                            'record_number': len(client_barriers[client_barrier_id - 1]['logs']) + 1 if len(
+                                client_barriers[client_barrier_id - 1]['logs']) != 0 else 1,
+                            'event': '[АВТОМАТИЧЕСКАЯ КОМАНДА] Открыть преграждение...',
+                            'datetime': datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                            'frame': convert_numpy_array_to_image(license_plate_image),
+                        }
 
-                for barrier in barriers_table:
-                    for barrier_license_plate in barrier.license_plates:
-                        # Если распознанный автомобильный номер найден в соответствующей таблице локальной базы данных
-                        if labels[0] == barrier_license_plate:
-                            if debug:
-                                uploaded_images_count = get_images_count(upload_images_path)
-                                save_location = (
-                                    os.path.join(
-                                        app.root_path, '{}/{}.jpg'.format(upload_images_path, uploaded_images_count)
-                                    )
-                                )
+                        client_barriers[client_barrier_id - 1]['logs'].append(barrier_log)
 
-                                cv2.rectangle(
-                                    license_plate_image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 5
-                                )
-                                cv2.putText(
-                                    license_plate_image, labels[0], (int(x1), int(y1 - 10)),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3
-                                )
-                                cv2.imwrite(save_location, license_plate_image)
-
+                        try:
+                            Client.query.filter_by(company_name=client_company_name).update(
+                                {'barriers': client_barriers})
+                            sqlite_database.session.commit()
                             return 'OPEN'  # Подаём команду на открытие преграждения
-                            
-                '''
+                        except SQLAlchemyError as error:
+                            sqlite_database.rollback()
+                            logging.error(
+                                'Failed to commit changes because of {error}. Doing rollback...'.format(error=error))
 
-    return 'CLOSE'  # Иначе, подаём команду на закрытие преграждения
+    barrier_log = {
+        'record_number': len(client_barriers[client_barrier_id - 1]['logs']) + 1 if len(
+            client_barriers[client_barrier_id - 1]['logs']) != 0 else 1,
+        'event': '[АВТОМАТИЧЕСКАЯ КОМАНДА] Закрыть преграждение...',
+        'datetime': datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+        'frame': convert_numpy_array_to_image(license_plate_image),
+    }
+
+    client_barriers[client_barrier_id - 1]['logs'].append(barrier_log)
+
+    try:
+        Client.query.filter_by(company_name=client_company_name).update({'barriers': client_barriers})
+        sqlite_database.session.commit()
+        return 'CLOSE'  # Иначе, подаём команду на закрытие преграждения
+    except SQLAlchemyError as error:
+        sqlite_database.rollback()
+        logging.error('Failed to commit changes because of {error}. Doing rollback...'.format(error=error))
 
 
 @app.route('/recognize', methods=['POST'])
 def recognize_license_plate(debug=False):
     if request.method == 'POST':
+        client_company_name = 'UlSTU'  # request.headers['company_name']
+        client_barrier_id = int('1')  # request.headers['barrier_id']
         license_plate_image_raw_bytes = request.get_data()
 
         if debug:
@@ -235,8 +261,8 @@ def recognize_license_plate(debug=False):
             license_plate_image_file.write(license_plate_image_raw_bytes)
             license_plate_image_file.close()
 
-        license_plate_text = get_prediction(license_plate_image_raw_bytes)
-        return license_plate_text
+        barrier_action = get_prediction(client_company_name, client_barrier_id, license_plate_image_raw_bytes)
+        return barrier_action
 
 
 @app.route('/')
@@ -286,6 +312,7 @@ def add_barrier():
             'client_company_name': client.company_name,
             'location': form.location.data,
             'license_plates': form.license_plates.data,
+            'logs': [],
         }
 
         client.barriers.append(new_barrier)
@@ -299,6 +326,14 @@ def add_barrier():
             logging.error('Failed to commit changes because of {error}. Doing rollback...'.format(error=error))
 
     return render_template('add_barrier.html', form=form)
+
+
+@app.route('/barriers/logs', methods=['GET', 'POST'])
+@login_required
+def barrier_logs():
+    client = Client.query.get(request.args.get('client_id'))
+    return render_template('barrier_logs.html',
+                           barrier=client.barriers[int(request.args.get('barrier_id')) - 1])
 
 
 @app.route('/logout', methods=['GET', 'POST'])

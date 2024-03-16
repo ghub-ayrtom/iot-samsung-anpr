@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Samsung Course (Internet of Things track) — ANPR</title>
+</head>
+<style>
+    table, th, td {
+        border: 1px solid black;
+        text-align: center;
+    }
+
+    td { padding: 10px; }
+</style>
+<body>
+    <h1>Logs of your barrier {{ barrier.id }}</h1>
+    {% if barrier is not none %}
+        <table>
+            <tr>
+                <th>Record Number</th>
+                <th>Event</th>
+                <th>Datetime</th>
+                <th>Frame</th>
+            </tr>
+        {% for log in barrier.logs %}
+            <tr>
+                <td>{{ log.record_number }}</td>
+                <td>{{ log.event }}</td>
+                <td>{{ log.datetime }}</td>
+                <td><img src="data:image/png;base64, {{ log.frame }}" alt="" height="240" width="320"></td>
+            </tr>
+        {% endfor %}
+        </table><br>
+    {% endif %}
+</body>
+</html>
