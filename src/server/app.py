@@ -1,6 +1,7 @@
 import sys
 sys.path.insert(1, '/home/ayrtom/PycharmProjects/iot-samsung-anpr/src/models')
 
+from transliterate.discover import autodiscover
 import base64
 from flask_bcrypt import Bcrypt
 from src.models.Decoders import BeamDecoder, decode_function
@@ -9,20 +10,23 @@ from datetime import datetime
 from flask import Flask, redirect, render_template, request, url_for
 from flask_wtf import FlaskForm
 from PIL import Image
-from wtforms.validators import InputRequired, Length, ValidationError
+from wtforms.validators import InputRequired, Length
 import io
 from src.models.LPRNet import load_default_lprnet
 from src.models.SpatialTransformer import load_default_stn
 import logging
 from flask_login import LoginManager, login_required, login_user, logout_user, UserMixin
+import math
 from sqlalchemy.ext.mutable import MutableList
 import numpy as np
 import os
 from wtforms import PasswordField, StringField, SubmitField
 from sqlalchemy import PickleType
+from transliterate.base import registry, TranslitLanguagePack
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.exc import SQLAlchemyError
 import torch
+from transliterate import translit
 from ultralytics import YOLO
 
 
@@ -66,42 +70,47 @@ class Client(sqlite_database.Model, UserMixin):
 
 
 class RegisterForm(FlaskForm):
-    username = StringField(validators=[InputRequired(), Length(min=3, max=15)], render_kw={'placeholder': 'Username'})
-    password = PasswordField(validators=[InputRequired(), Length(min=5, max=25)], render_kw={'placeholder': 'Password'})
-    company_name = StringField(validators=[InputRequired(), Length(min=3, max=25)],
-                               render_kw={'placeholder': 'Company Name'})
-    submit = SubmitField('Sign Up')
+    username = StringField(validators=[InputRequired(), Length(min=3, max=15)])
+    password = PasswordField(validators=[InputRequired(), Length(min=5, max=25)])
+    company_name = StringField(validators=[InputRequired(), Length(min=3, max=25)])
+    submit = SubmitField('Зарегистрироваться')
 
     def validate_input(self, username, company_name):
         username_already_exists = Client.query.filter_by(username=username.data).first()
-        company_name_already_exists = Client.query.filter_by(title=company_name.data).first()
+        company_name_already_exists = Client.query.filter_by(company_name=company_name.data).first()
 
         if username_already_exists:
-            raise ValidationError('That username already exists. Please choose a different one.')
+            return 1
         elif company_name_already_exists:
-            raise ValidationError('That company name already exists. Please choose a different one.')
+            return -1
+        else:
+            return 0
 
 
 class LoginForm(FlaskForm):
-    username = StringField(validators=[InputRequired(), Length(min=3, max=15)], render_kw={'placeholder': 'Username'})
-    password = PasswordField(validators=[InputRequired(), Length(min=5, max=25)], render_kw={'placeholder': 'Password'})
-    submit = SubmitField('Sign In')
+    username = StringField(validators=[InputRequired(), Length(min=3, max=15)])
+    password = PasswordField(validators=[InputRequired(), Length(min=5, max=25)])
+    submit = SubmitField('Авторизоваться')
+
+
+class LicensePlatesLanguagePack(TranslitLanguagePack):
+    language_code = 'lp'
+    language_name = "License Plates"
+    mapping = (
+        u'АВЕКМНОРСТУХ',  # Кириллица
+        u'ABEKMHOPCTYX',  # Латиница
+    )
 
 
 class TagListField(StringField):
-    """Stringfield for a list of separated tags"""
-
-    def __init__(self, label='', validators=None, remove_duplicates=True, separator=' ', **kwargs):
-        """
-        Construct a new field.
-        :param label: The label of the field.
-        :param validators: A sequence of validators to call when validate is called.
-        :param remove_duplicates: Remove duplicates in a case-insensitive manner.
-        :param to_lowercase: Cast all values to lowercase.
-        :param separator: The separator that splits the individual tags.
-        """
-        super(TagListField, self).__init__(label, validators, **kwargs)
+    def __init__(self, min_length=1, max_length=math.inf, remove_duplicates=True, to_uppercase=True,
+                 transliterate=False, separator=',', **kwargs):
+        super(TagListField, self).__init__(**kwargs)
+        self.min_length = min_length,
+        self.max_length = max_length,
         self.remove_duplicates = remove_duplicates
+        self.to_uppercase = to_uppercase
+        self.transliterate = transliterate
         self.separator = separator
         self.data = []
 
@@ -111,27 +120,61 @@ class TagListField(StringField):
         else:
             return u''
 
-    def process_formdata(self, valuelist):
-        if valuelist:
-            self.data = [x.strip() for x in valuelist[0].split(self.separator)]
+    def process_formdata(self, tags):
+        if tags:
+            # Делим по запятым целую введённую строку на отдельные теги и удаляем в них лишние пробелы,
+            # если они имеют заданную длину
+            self.data = [
+                tag.strip() if self.min_length[0] <= len(tag.strip()) <= self.max_length[0] else None
+                for tag in tags[0].split(self.separator)
+            ]
+
             if self.remove_duplicates:
-                self.data = list(self._remove_duplicates(self.data))
+                # Удаляем дублирующиеся теги
+                self.data = list(self._remove_duplicates(self.data, self.transliterate))
+
+            if self.to_uppercase:
+                # Переводим все теги в верхний регистр
+                self.data = [tag.upper() for tag in self.data]
+
+            # Если в качестве тегов в поле вводятся автомобильные номера
+            if self.transliterate:
+                self.data = sorted(self.data)  # Сортируем их в алфавитном порядке
 
     @classmethod
-    def _remove_duplicates(cls, seq):
-        """Remove duplicates in a case-insensitive, but case preserving manner"""
-        d = {}
-        for item in seq:
-            if item.lower() not in d:
-                d[item.lower()] = True
-                yield item
+    def _remove_duplicates(cls, tags, transliterate):
+        duplicate_tags = {}
+
+        for tag in tags:
+            if tag is not None:
+                if transliterate:
+                    autodiscover()  # Даёт возможность использовать встроенные языковые пакеты со своими собственными
+                    # Принудительно регистрируем свой собственный языковой пакет
+                    registry.register(LicensePlatesLanguagePack, force=True)
+                    # Преобразуем теги автомобильных номеров в их латинское написание для корректного сравнения
+                    tag = translit(tag.upper(), 'lp')
+
+                if tag not in duplicate_tags:
+                    duplicate_tags[tag] = True
+                    yield tag
 
 
 class AddBarrierForm(FlaskForm):
-    model = StringField(validators=[Length(min=3, max=15)], render_kw={'placeholder': 'Model'})
-    location = StringField(validators=[InputRequired(), Length(min=5, max=50)], render_kw={'placeholder': 'Location'})
-    license_plates = TagListField('License Plates', separator=',')
-    submit = SubmitField('Add')
+    model = StringField()
+    location = StringField(validators=[Length(max=50)])
+    license_plates = TagListField(min_length=8, max_length=9, transliterate=True, validators=[InputRequired()],
+                                  render_kw={'placeholder': 'B776YC77, E015HA73, ...'})
+    events = TagListField(to_uppercase=False, render_kw={'placeholder': 'Открытие, Закрытие, ...'})
+    submit = SubmitField('Добавить')
+
+
+class EditBarrierForm(FlaskForm):
+    model = StringField()
+    location = StringField(validators=[Length(max=50)])
+    license_plates = TagListField(min_length=8, max_length=9, transliterate=True, validators=[InputRequired()],
+                                  render_kw={'placeholder': 'B776YC77, E015HA73, ...'})
+    events = TagListField(to_uppercase=False, render_kw={'placeholder': 'Открытие, Закрытие, ...'})
+    submit = SubmitField('Внести изменения')
 
 
 def get_images_count(path):
@@ -210,7 +253,7 @@ def get_prediction(client_company_name, client_barrier_id, image_bytes):
                         barrier_log = {
                             'record_number': len(client_barriers[client_barrier_id - 1]['logs']) + 1 if len(
                                 client_barriers[client_barrier_id - 1]['logs']) != 0 else 1,
-                            'event': '[АВТОМАТИЧЕСКАЯ КОМАНДА] Открыть преграждение...',
+                            'event': '',
                             'datetime': datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
                             'frame': convert_numpy_array_to_image(license_plate_image),
                         }
@@ -230,7 +273,7 @@ def get_prediction(client_company_name, client_barrier_id, image_bytes):
     barrier_log = {
         'record_number': len(client_barriers[client_barrier_id - 1]['logs']) + 1 if len(
             client_barriers[client_barrier_id - 1]['logs']) != 0 else 1,
-        'event': '[АВТОМАТИЧЕСКАЯ КОМАНДА] Закрыть преграждение...',
+        'event': '',
         'datetime': datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
         'frame': convert_numpy_array_to_image(license_plate_image),
     }
@@ -249,8 +292,8 @@ def get_prediction(client_company_name, client_barrier_id, image_bytes):
 @app.route('/recognize', methods=['POST'])
 def recognize_license_plate(debug=False):
     if request.method == 'POST':
-        client_company_name = 'UlSTU'  # request.headers['company_name']
-        client_barrier_id = int('1')  # request.headers['barrier_id']
+        client_company_name = request.headers['Company-Name']
+        client_barrier_id = int(request.headers['Barrier-ID'])
         license_plate_image_raw_bytes = request.get_data()
 
         if debug:
@@ -273,6 +316,7 @@ def home():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     form = LoginForm()
+    validation_error_message = ''
 
     if form.validate_on_submit():
         client = Client.query.filter_by(username=form.username.data).first()
@@ -281,8 +325,12 @@ def login():
             if bcrypt.check_password_hash(client.password, form.password.data):
                 login_user(client)
                 return redirect(url_for('dashboard', client_id=client.id, client_company_name=client.company_name))
+            else:
+                validation_error_message = 'Введён неверный пароль!'
+        else:
+            validation_error_message = 'Пользователь с таким именем не зарегистрирован!'
 
-    return render_template('login.html', form=form)
+    return render_template('login.html', form=form, error=validation_error_message)
 
 
 @app.route('/dashboard', methods=['GET', 'POST'])
@@ -306,12 +354,11 @@ def add_barrier():
 
     if form.validate_on_submit():
         new_barrier = {
-            'id': len(client.barriers) + 1,
-            'client_id': client.id,
+            'id': client.barriers[-1]['id'] + 1 if len(client.barriers) > 0 else 1,
             'model': form.model.data,
-            'client_company_name': client.company_name,
             'location': form.location.data,
             'license_plates': form.license_plates.data,
+            'events': form.events.data,
             'logs': [],
         }
 
@@ -328,41 +375,110 @@ def add_barrier():
     return render_template('add_barrier.html', form=form)
 
 
+@app.route('/barriers/delete', methods=['POST'])
+@login_required
+def delete_barrier():
+    client_barriers = Client.query.get_or_404(request.args.get('client_id')).barriers
+
+    for barrier in client_barriers:
+        if barrier['id'] == int(request.args.get('barrier_id')):
+            client_barriers.remove(barrier)
+
+    try:
+        sqlite_database.session.query(Client).filter(Client.id == request.args.get('client_id')).update({
+            'barriers': client_barriers
+        })
+        sqlite_database.session.commit()
+        return redirect(url_for('barriers', client_id=request.args.get('client_id')))
+    except SQLAlchemyError as error:
+        sqlite_database.rollback()
+        logging.error('Failed to commit changes because of {error}. Doing rollback...'.format(error=error))
+
+
+@app.route('/barriers/edit', methods=['GET', 'POST'])
+@login_required
+def edit_barrier():
+    form = EditBarrierForm()
+    client_barriers = Client.query.get_or_404(request.args.get('client_id')).barriers
+
+    editable_barrier = {}
+    editable_barrier_index = -1
+
+    for index, barrier in enumerate(client_barriers):
+        if barrier['id'] == int(request.args.get('barrier_id')):
+            editable_barrier = barrier
+            editable_barrier_index = index
+
+    if request.method == 'POST':
+        if form.validate_on_submit():
+            editable_barrier['model'] = form.model.data
+            editable_barrier['location'] = form.location.data
+            editable_barrier['license_plates'] = form.license_plates.data
+            editable_barrier['events'] = form.events.data
+
+            client_barriers[editable_barrier_index] = editable_barrier
+
+            try:
+                sqlite_database.session.query(Client).filter(Client.id == request.args.get('client_id')).update({
+                    'barriers': client_barriers
+                })
+                sqlite_database.session.commit()
+                return redirect(url_for('barriers', client_id=request.args.get('client_id')))
+            except SQLAlchemyError as error:
+                sqlite_database.rollback()
+                logging.error('Failed to commit changes because of {error}. Doing rollback...'.format(error=error))
+    else:
+        form.model.data = editable_barrier['model']
+        form.location.data = editable_barrier['location']
+        form.license_plates.data = editable_barrier['license_plates']
+        form.events.data = editable_barrier['events']
+
+        return render_template('edit_barrier.html', form=form, barrier=editable_barrier)
+
+
 @app.route('/barriers/logs', methods=['GET', 'POST'])
 @login_required
 def barrier_logs():
-    client = Client.query.get(request.args.get('client_id'))
-    return render_template('barrier_logs.html',
-                           barrier=client.barriers[int(request.args.get('barrier_id')) - 1])
+    client_barriers = Client.query.get_or_404(request.args.get('client_id')).barriers
+
+    for barrier in client_barriers:
+        if barrier['id'] == int(request.args.get('barrier_id')):
+            return render_template('barrier_logs.html', barrier=barrier)
 
 
 @app.route('/logout', methods=['GET', 'POST'])
 @login_required
 def logout():
     logout_user()
-    return redirect(url_for('login'))
+    return redirect(url_for('home'))
 
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     form = RegisterForm()
+    validation_error_message = ''
 
     if form.validate_on_submit():
-        new_client = Client(
-            username=form.username.data,
-            password= bcrypt.generate_password_hash(form.password.data),
-            company_name=form.company_name.data,
-        )
+        if form.validate_input(form.username, form.company_name) == 0:
+            new_client = Client(
+                username=form.username.data,
+                password= bcrypt.generate_password_hash(form.password.data),
+                company_name=form.company_name.data,
+            )
 
-        try:
-            sqlite_database.session.add(new_client)
-            sqlite_database.session.commit()
-            return redirect(url_for('login'))
-        except SQLAlchemyError as error:
-            sqlite_database.rollback()
-            logging.error('Failed to commit changes because of {error}. Doing rollback...'.format(error=error))
+            try:
+                sqlite_database.session.add(new_client)
+                sqlite_database.session.commit()
+                return redirect(url_for('login'))
+            except SQLAlchemyError as error:
+                sqlite_database.rollback()
+                logging.error('Failed to commit changes because of {error}. Doing rollback...'.format(error=error))
+        elif form.validate_input(form.username, form.company_name) == 1:
+            validation_error_message = 'Пользователь с таким именем уже зарегистрирован!'
+        elif form.validate_input(form.username, form.company_name) == -1:
+            validation_error_message = 'Компания с таким названием уже зарегистрирована!'
 
-    return render_template('register.html', form=form)
+    return render_template('register.html', form=form, error=validation_error_message)
 
 
 if __name__ == '__main__':

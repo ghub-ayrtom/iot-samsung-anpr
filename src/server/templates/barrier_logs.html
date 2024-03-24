@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Samsung Course (Internet of Things track) — ANPR</title>
+    <title>Курс Samsung (трек Интернета вещей) — ANPR</title>
 </head>
 <style>
     table, th, td {
@@ -10,17 +10,17 @@
         text-align: center;
     }
 
-    td { padding: 10px; }
+    th, td { padding: 10px; }
 </style>
 <body>
-    <h1>Logs of your barrier {{ barrier.id }}</h1>
+    <h1>Записи логов вашего преграждения под идентификатором {{ barrier.id }}</h1>
     {% if barrier is not none %}
         <table>
             <tr>
-                <th>Record Number</th>
-                <th>Event</th>
-                <th>Datetime</th>
-                <th>Frame</th>
+                <th>Номер записи</th>
+                <th>Произошедшее событие</th>
+                <th>Дата и время</th>
+                <th>Изображение</th>
             </tr>
         {% for log in barrier.logs %}
             <tr>

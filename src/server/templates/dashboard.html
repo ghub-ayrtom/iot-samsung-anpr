@@ -2,11 +2,11 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Samsung Course (Internet of Things track) — ANPR</title>
+    <title>Курс Samsung (трек Интернета вещей) — ANPR</title>
 </head>
 <body>
-    <h1>Welcome back, {{ request.args.get('client_company_name') }}!</h1>
-    <a href="{{ url_for('barriers', client_id=request.args.get('client_id')) }}">Barriers</a><br><br>
-    <a href="{{ url_for('logout') }}">Logout</a>
+    <h1>Добро пожаловать, {{ request.args.get('client_company_name') }}!</h1>
+    <a href="{{ url_for('barriers', client_id=request.args.get('client_id')) }}">Мои преграждения</a><br><br>
+    <a href="{{ url_for('logout') }}">Выйти</a>
 </body>
 </html>

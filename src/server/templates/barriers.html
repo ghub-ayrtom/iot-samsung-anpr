@@ -2,24 +2,29 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Samsung Course (Internet of Things track) — ANPR</title>
+    <title>Курс Samsung (трек Интернета вещей) — ANPR</title>
 </head>
 <style>
     table, th, td {
         border: 1px solid black;
         text-align: center;
     }
+
+    th, td { padding: 10px; }
 </style>
 <body>
-    <h1>List of your barriers</h1>
+    <h1>Список ваших преграждений</h1>
     {% if barriers is not none %}
         <table>
             <tr>
-                <th>ID</th>
-                <th>Model</th>
-                <th>Location</th>
-                <th>License Plates</th>
-                <th>Logs</th>
+                <th>Идентификатор</th>
+                <th>Модель</th>
+                <th>Месторасположение</th>
+                <th>Допустимые к проезду<br>автомобильные номера</th>
+                <th>Возможные события</th>
+                <th>Записи логов</th>
+                <th>Редактировать</th>
+                <th>Удалить</th>
             </tr>
         {% for barrier in barriers %}
             <tr>
@@ -31,11 +36,33 @@
                     {{ license_plate }}<br>
                 {% endfor %}
                 </td>
-                <td><a href="{{ url_for('barrier_logs', client_id=request.args.get('client_id'), barrier_id=barrier.id) }}">View</a></td>
+                <td>
+                {% for event in barrier.events %}
+                    {{ loop.index }}. {{ event }}<br>
+                {% endfor %}
+                </td>
+                <td><a href="{{ url_for('barrier_logs', client_id=request.args.get('client_id'), barrier_id=barrier.id) }}">Посмотреть</a></td>
+                <td>
+                    <a href="{{ url_for('edit_barrier', client_id=request.args.get('client_id'), barrier_id=barrier.id) }}">
+                        <img src="../static/edit_barrier_icon.png" alt="Редактировать преграждение" height="20px" width="20px">
+                    </a>
+                </td>
+                <td>
+                    <form method="POST" action="{{ url_for('delete_barrier', client_id=request.args.get('client_id'), barrier_id=barrier.id) }}">
+                        <input
+                                type="image"
+                                src="../static/delete_barrier_icon.png"
+                                alt="Удалить преграждение"
+                                onclick="return confirm('Вы действительно хотите удалить данное преграждение?')"
+                                height="30px"
+                                width="30px"
+                        >
+                    </form>
+                </td>
             </tr>
         {% endfor %}
         </table><br>
     {% endif %}
-    <a href="{{ url_for('add_barrier', client_id=request.args.get('client_id')) }}">Add Barrier</a>
+    <a href="{{ url_for('add_barrier', client_id=request.args.get('client_id')) }}">Добавить новое преграждение</a>
 </body>
 </html>

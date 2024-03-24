@@ -2,6 +2,7 @@
 #include "esp_camera.h"
 #include <ESP32Servo.h>
 #include <HTTPClient.h>
+#include <map>
 #include <WiFi.h>
 
 #define PWDN_GPIO_NUM 32
@@ -23,19 +24,42 @@
 #define SERVO_PIN_NUM 14
 #define BUTTON_PIN_NUM 13
 
-const String networkName = "Redmi 5 Plus";
-const String networkPassword = "";
+using namespace std;
+
+const String networkName = "HolyNET";
+const String networkPassword = "24100202";
 const String companyName = "UlSTU";
 const String barrierID = "1";
 
+map<int, string> barrierEvents = {
+  {0, "[АВТОМАТИЧЕСКАЯ КОМАНДА] Открыть преграждение..."},
+  {1, "[АВТОМАТИЧЕСКАЯ КОМАНДА] Закрыть преграждение..."},
+  {2, "[РУЧНАЯ КОМАНДА] Открыть преграждение..."},
+  {3, "[БЕЗ КОМАНДЫ] Преграждение уже закрыто"},
+};
+
 HTTPClient http;
-const String serverURL = "http://192.168.43.72:8080/recognize";
+const String serverURL = "http://192.168.0.107:8080/recognize";
 
 Servo servo;
 int buttonState = 0;
 
-void setup()
-{
+// Отправляет строку с произошедшим событием на веб-сервер для того, чтобы дополнить им запись соответствующего лога
+void updateLogEvent(string event) {
+  http.addHeader("Content-Type", "text/plain; charset=UTF-8");
+  int httpCode = http.sendRequest("POST", event);
+
+  if (httpCode > 0) {
+    if (httpCode == HTTP_CODE_OK) {
+      response = http.getString();
+
+      if (response.length() > 0)
+        Serial.println(response + '\n');
+    }
+  }
+}
+
+void setup() {
   Serial.begin(115200);
   Serial.setDebugOutput(true);
   Serial.println();
@@ -162,8 +186,7 @@ void setup()
   #endif
 }
 
-void loop()
-{
+void loop() {
   camera_fb_t *frame_buffer = NULL;
   frame_buffer = esp_camera_fb_get(); // Получаем изображение с видеокамеры
 
@@ -176,8 +199,11 @@ void loop()
     http.begin(serverURL);
 
     Serial.println("\n[HTTP] POST...");
-    // http.addHeader("company_name", companyName);
-    // http.addHeader("barrier_id", barrierID);
+
+    http.addHeader("Content-Type", "image/jpeg");
+    http.addHeader("Company-Name", companyName);
+    http.addHeader("Barrier-ID", barrierID);
+
     int httpCode = http.sendRequest("POST", frame_buffer->buf, frame_buffer->len); // Отправляем полученное изображение на веб-сервер
 
     if (httpCode > 0) {
@@ -187,26 +213,30 @@ void loop()
         if (response.length() > 0) {
           // Если автомобильный номер с изображения был найден в локальной базе данных сервера И шлагбаум опущен
           if (response == "OPEN" && servo.read() == -1) {
-            Serial.println("[АВТОМАТИЧЕСКАЯ КОМАНДА] Открыть преграждение...\n");
+            Serial.println(barrierEvents[0]);
             servo.write(90); // Поднимаем его
             delay(5000); // Ждём определённое время, чтобы автомобиль успел проехать
+            updateLogEvent(barrierEvents[0]);
           // Иначе, в не зависимости от поступившей команды И если шлагбаум поднят
           } else if ((response == "OPEN" || response == "CLOSE") && servo.read() == 89) {
-            Serial.println("[АВТОМАТИЧЕСКАЯ КОМАНДА] Закрыть преграждение...\n");
+            Serial.println(barrierEvents[1] + '\n');
             // Опускаем его, так как автомобиля перед ним либо нет ("CLOSE"), 
             // либо он уже успел проехать в предыдущем условии (на самом деле нет)
             servo.write(0);
+            updateLogEvent(barrierEvents[1]);
           // Иначе, если автомобильный номер с изображения не был найден в локальной базе данных сервера И шлагбаум опущен
           } else if (response == "CLOSE" && servo.read() == -1) {
-            // buttonState = digitalRead(BUTTON_PIN_NUM); // Отслеживаем состояние кнопки
+            buttonState = digitalRead(BUTTON_PIN_NUM); // Отслеживаем состояние кнопки
 
             // Если она была нажата
             if (buttonState == HIGH) {
-              Serial.println("[РУЧНАЯ КОМАНДА] Открыть преграждение...\n");
+              Serial.println(barrierEvents[2] + '\n');
               servo.write(90); // Поднимаем преграждение в ручном режиме
               delay(5000); // Также ждём пока автомобиль проедет
+              updateLogEvent(barrierEvents[2]);
             } else {
-              Serial.println("[БЕЗ КОМАНДЫ] Преграждение уже закрыто\n");
+              Serial.println(barrierEvents[3] + '\n');
+              updateLogEvent(barrierEvents[3]);
             }
           }
         }

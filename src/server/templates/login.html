@@ -2,16 +2,25 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Samsung Course (Internet of Things track) — ANPR</title>
+    <title>Курс Samsung (трек Интернета вещей) — ANPR</title>
 </head>
 <body>
-    <h1>Sign In</h1>
+    <h1 style="margin-bottom: 15px">Авторизация</h1>
     <form method="POST" action="">
         {{ form.hidden_tag() }}
-        {{ form.username }}<br><br>
-        {{ form.password }}<br><br>
+        <b><label style="font-size: 10px">Имя пользователя</label><br></b>
+        {{ form.username }}<br>
+        <b><label style="font-size: 10px">Пароль</label><br></b>
+        {{ form.password }}<br>
+
+        {%  if error != '' %}
+            <p style="font-size: 14px; color: red">{{ error }}</p>
+        {% else %}
+            <br>
+        {% endif %}
+
         {{ form.submit }}<br><br>
     </form>
-    <a href="{{ url_for('register') }}">Don't have an account? Sign Up!</a>
+    <a href="{{ url_for('register') }}">Ещё нет аккаунта? Зарегистрируйтесь!</a>
 </body>
 </html>
