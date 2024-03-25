@@ -22,6 +22,7 @@ import numpy as np
 import os
 from wtforms import PasswordField, StringField, SubmitField
 from sqlalchemy import PickleType
+import re
 from transliterate.base import registry, TranslitLanguagePack
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.exc import SQLAlchemyError
@@ -139,7 +140,16 @@ class TagListField(StringField):
 
             # Если в качестве тегов в поле вводятся автомобильные номера
             if self.transliterate:
-                self.data = sorted(self.data)  # Сортируем их в алфавитном порядке
+                license_plate_regex_pattern = re.compile('^[ABEKMHOPCTYX]([0-9]){3}([ABEKMHOPCTYX]){2}([0-9]){2,3}$')
+                license_plates_tags = []
+
+                # Проверяем каждый из них на соответствие паттерну регулярного выражения выше
+                for license_plate_tag in self.data:
+                    if license_plate_regex_pattern.search(license_plate_tag):
+                        license_plates_tags.append(license_plate_tag)
+
+                # Сортируем подошедшие по формату автомобильные номера в алфавитном порядке
+                self.data = sorted(license_plates_tags)
 
     @classmethod
     def _remove_duplicates(cls, tags, transliterate):
@@ -239,17 +249,17 @@ def get_prediction(client_company_name, client_barrier_id, image_bytes):
             )
 
             if (probability[0] < -85) and (len(labels[0]) in [8, 9]):
+                cv2.rectangle(
+                    license_plate_image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 5
+                )
+                cv2.putText(
+                    license_plate_image, labels[0], (int(x1), int(y1 - 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3
+                )
+
                 for barrier_license_plate in client_barriers[client_barrier_id - 1]['license_plates']:
                     # Если распознанный автомобильный номер найден в соответствующем списке для данного преграждения
                     if labels[0] == barrier_license_plate:
-                        cv2.rectangle(
-                            license_plate_image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 5
-                        )
-                        cv2.putText(
-                            license_plate_image, labels[0], (int(x1), int(y1 - 10)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3
-                        )
-
                         barrier_log = {
                             'record_number': len(client_barriers[client_barrier_id - 1]['logs']) + 1 if len(
                                 client_barriers[client_barrier_id - 1]['logs']) != 0 else 1,
@@ -294,18 +304,38 @@ def recognize_license_plate(debug=False):
     if request.method == 'POST':
         client_company_name = request.headers['Company-Name']
         client_barrier_id = int(request.headers['Barrier-ID'])
-        license_plate_image_raw_bytes = request.get_data()
 
-        if debug:
-            uploaded_images_count = get_images_count(upload_images_path)
-            save_location = (os.path.join(app.root_path, '{}/{}.jpg'.format(upload_images_path, uploaded_images_count)))
+        if request.headers['Content-Type'] == 'image/jpeg':
+            license_plate_image_raw_bytes = request.get_data()
 
-            license_plate_image_file = open(save_location, 'wb')
-            license_plate_image_file.write(license_plate_image_raw_bytes)
-            license_plate_image_file.close()
+            if debug:
+                uploaded_images_count = get_images_count(upload_images_path)
+                save_location = (os.path.join(app.root_path, '{}/{}.jpg'.format(upload_images_path, uploaded_images_count)))
 
-        barrier_action = get_prediction(client_company_name, client_barrier_id, license_plate_image_raw_bytes)
-        return barrier_action
+                license_plate_image_file = open(save_location, 'wb')
+                license_plate_image_file.write(license_plate_image_raw_bytes)
+                license_plate_image_file.close()
+
+            barrier_action = get_prediction(client_company_name, client_barrier_id, license_plate_image_raw_bytes)
+            return barrier_action
+        elif request.headers['Content-Type'] == 'text/plain; charset=UTF-8':
+            client_barriers = Client.query.filter_by(company_name=client_company_name).first().barriers
+            event_index = int(request.data.decode('utf-8')) - 1
+
+            for barrier in client_barriers:
+                if barrier['id'] == client_barrier_id and event_index <= len(barrier['events']) - 1:
+                    barrier['logs'][-1]['event'] = barrier['events'][event_index]
+
+                    try:
+                        Client.query.filter_by(company_name=client_company_name).update({'barriers': client_barriers})
+                        sqlite_database.session.commit()
+                        return barrier['logs'][-1]['event']
+                    except SQLAlchemyError as error:
+                        sqlite_database.rollback()
+                        logging.error(
+                            'Failed to commit changes because of {error}. Doing rollback...'.format(error=error))
+                else:
+                    return 'Возможное событие под номером {} не определено!'.format(request.data.decode('utf-8'))
 
 
 @app.route('/')

@@ -2,7 +2,6 @@
 #include "esp_camera.h"
 #include <ESP32Servo.h>
 #include <HTTPClient.h>
-#include <map>
 #include <WiFi.h>
 
 #define PWDN_GPIO_NUM 32
@@ -24,19 +23,10 @@
 #define SERVO_PIN_NUM 14
 #define BUTTON_PIN_NUM 13
 
-using namespace std;
-
 const String networkName = "HolyNET";
 const String networkPassword = "24100202";
 const String companyName = "UlSTU";
 const String barrierID = "1";
-
-map<int, string> barrierEvents = {
-  {0, "[АВТОМАТИЧЕСКАЯ КОМАНДА] Открыть преграждение..."},
-  {1, "[АВТОМАТИЧЕСКАЯ КОМАНДА] Закрыть преграждение..."},
-  {2, "[РУЧНАЯ КОМАНДА] Открыть преграждение..."},
-  {3, "[БЕЗ КОМАНДЫ] Преграждение уже закрыто"},
-};
 
 HTTPClient http;
 const String serverURL = "http://192.168.0.107:8080/recognize";
@@ -45,13 +35,13 @@ Servo servo;
 int buttonState = 0;
 
 // Отправляет строку с произошедшим событием на веб-сервер для того, чтобы дополнить им запись соответствующего лога
-void updateLogEvent(string event) {
+void updateLogEvent(int eventNumber) {
   http.addHeader("Content-Type", "text/plain; charset=UTF-8");
-  int httpCode = http.sendRequest("POST", event);
+  int httpCode = http.sendRequest("POST", String(eventNumber));
 
   if (httpCode > 0) {
     if (httpCode == HTTP_CODE_OK) {
-      response = http.getString();
+      String response = http.getString();
 
       if (response.length() > 0)
         Serial.println(response + '\n');
@@ -69,16 +59,22 @@ void setup() {
   pinMode(BUTTON_PIN_NUM, INPUT);
 
   WiFi.begin(networkName, networkPassword);
-  Serial.print("Attempting to connect to the network");
+  Serial.print("Попытка подключения к сети");
   
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
- 
-  Serial.print("\nNetwork connection with IP address: ");
-  Serial.print(WiFi.localIP());
-  Serial.println(" was successful");
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("\nПодключение к сети с IP-адресом: ");
+    Serial.print(WiFi.localIP());
+    Serial.println(" прошло успешно!");
+  }
+  else {
+    Serial.print("\nНе удалось подключиться к сети с IP-адресом: ");
+    Serial.print(WiFi.localIP());
+  }
 
   camera_config_t config;
 
@@ -137,7 +133,7 @@ void setup() {
   esp_err_t error = esp_camera_init(&config);
 
   if (error != ESP_OK) {
-    Serial.printf("Camera init failed with error 0x%x!\n", error);
+    Serial.printf("Инициализация модуля видеокамеры завершилась со следующей ошибкой: 0x%x!\n", error);
     return;
   }
 
@@ -191,14 +187,14 @@ void loop() {
   frame_buffer = esp_camera_fb_get(); // Получаем изображение с видеокамеры
 
   if (!frame_buffer) {
-    Serial.println("Camera capture failed!\n");
+    Serial.println("Ошибка захвата изображения!\n");
     return;
   }
 
   if (WiFi.status() == WL_CONNECTED) {
     http.begin(serverURL);
 
-    Serial.println("\n[HTTP] POST...");
+    Serial.println("\n[HTTP] Отправка POST-запроса на веб-сервер...");
 
     http.addHeader("Content-Type", "image/jpeg");
     http.addHeader("Company-Name", companyName);
@@ -213,42 +209,36 @@ void loop() {
         if (response.length() > 0) {
           // Если автомобильный номер с изображения был найден в локальной базе данных сервера И шлагбаум опущен
           if (response == "OPEN" && servo.read() == -1) {
-            Serial.println(barrierEvents[0]);
             servo.write(90); // Поднимаем его
             delay(5000); // Ждём определённое время, чтобы автомобиль успел проехать
-            updateLogEvent(barrierEvents[0]);
+            updateLogEvent(1);
           // Иначе, в не зависимости от поступившей команды И если шлагбаум поднят
           } else if ((response == "OPEN" || response == "CLOSE") && servo.read() == 89) {
-            Serial.println(barrierEvents[1] + '\n');
             // Опускаем его, так как автомобиля перед ним либо нет ("CLOSE"), 
             // либо он уже успел проехать в предыдущем условии (на самом деле нет)
             servo.write(0);
-            updateLogEvent(barrierEvents[1]);
+            updateLogEvent(2);
           // Иначе, если автомобильный номер с изображения не был найден в локальной базе данных сервера И шлагбаум опущен
           } else if (response == "CLOSE" && servo.read() == -1) {
             buttonState = digitalRead(BUTTON_PIN_NUM); // Отслеживаем состояние кнопки
 
             // Если она была нажата
             if (buttonState == HIGH) {
-              Serial.println(barrierEvents[2] + '\n');
               servo.write(90); // Поднимаем преграждение в ручном режиме
               delay(5000); // Также ждём пока автомобиль проедет
-              updateLogEvent(barrierEvents[2]);
+              updateLogEvent(3);
             } else {
-              Serial.println(barrierEvents[3] + '\n');
-              updateLogEvent(barrierEvents[3]);
+              updateLogEvent(4);
             }
           }
         }
       }
     } else {
-      Serial.printf("[HTTP] POST failed with error: %s!\n", http.errorToString(httpCode).c_str());
+      Serial.printf("[HTTP] POST-запрос завершился со следующей ошибкой: %s!\n", http.errorToString(httpCode).c_str());
     }
-  } else {
-    Serial.println("An error occurred while trying to connect to the network!\n");
-  }
 
-  http.end();
-  esp_camera_fb_return(frame_buffer);
-  delay(3000);
+    http.end();
+    esp_camera_fb_return(frame_buffer);
+    delay(3000);
+  }
 }
